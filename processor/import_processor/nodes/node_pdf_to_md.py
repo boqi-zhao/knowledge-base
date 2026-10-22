@@ -8,6 +8,7 @@ from pathlib import Path
 
 import requests
 
+from config.path_config import DOC_DIR, OUTPUT_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError, FileProcessingError, ConfigurationError, \
     PdfConversionError
@@ -254,9 +255,10 @@ if __name__ == "__main__":
     # 激活日志
     setup_logging()
 
+    # 示例：输入取项目根目录 doc/ 下的 PDF，产物输出到项目根目录 output/
     init_state = {
-        "pdf_path": r"D:\doc\联想海豚用户手册.pdf",
-        "file_dir": r"D:\output"
+        "pdf_path": str(DOC_DIR / "H3C LA2608室内无线网关 用户手册-6W100-整本手册.pdf"),
+        "file_dir": str(OUTPUT_DIR),
     }
     node_pdf_to_md = NodePDFToMD()
     # 使用 对象() 的方式相当于调用了 对象的__call__()

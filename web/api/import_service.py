@@ -11,6 +11,7 @@ from typing import List, Dict, Any
 from starlette.responses import FileResponse
 
 from config.minio_config import minio_config
+from config.path_config import DOC_DIR, ensure_dir
 from processor.import_processor.main_graph import KBImportWorkflow
 from tool.logger import logger
 import uvicorn
@@ -109,8 +110,8 @@ async def upload_files(background_tasks: BackgroundTasks, files: List[UploadFile
     :return: 包含上传结果和所有任务ID的JSON响应
     """
     # 1. 构建本地存储根目录：项目根目录/doc/YYYYMMDD（按日期分层，方便管理）
-    data_based_root_dir = os.getenv("DATA_BASED_ROOT_DIR")
-    data_dir = os.path.join(data_based_root_dir, datetime.now().strftime("%Y%m%d"))
+    #    DOC_DIR 默认即 <项目根>/doc，可通过 .env 中的 DATA_BASED_ROOT_DIR 覆盖
+    data_dir = os.path.join(str(DOC_DIR), datetime.now().strftime("%Y%m%d"))
     # 初始化任务ID列表，用于返回给前端（一个文件对应一个TaskID）
     task_ids = []
 
@@ -126,7 +127,7 @@ async def upload_files(background_tasks: BackgroundTasks, files: List[UploadFile
 
         # 4. 构建该任务的本地独立目录：output/YYYYMMDD/TaskID，避免多文件重名冲突
         file_dir = os.path.join(data_dir, task_id)
-        os.makedirs(file_dir, exist_ok=True)  # 目录不存在则创建，存在则不做处理
+        ensure_dir(file_dir)  # 目录不存在则创建，存在则不做处理
         # 构建上传文件的本地保存绝对路径
         import_file_path = os.path.join(file_dir, file.filename)
 

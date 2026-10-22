@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Dict, List
 
+from config.path_config import OUTPUT_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError
 from processor.import_processor.state import ImportGraphState
@@ -108,7 +109,8 @@ if __name__ == "__main__":
 
     setup_logging()
 
-    json_path = r"D:\output\hak180产品安全手册\state.json"
+    demo_title = "H3C LA2608室内无线网关 用户手册-6W100-整本手册"
+    json_path = OUTPUT_DIR / demo_title / "state.json"
     with open(json_path, "r", encoding="utf-8") as f:
         state_json = f.read()
 

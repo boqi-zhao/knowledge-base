@@ -53,3 +53,8 @@ data/
 models/
 *.db
 *.sqlite3
+
+# ---- 本地文档与产物目录（不入仓库，见 config/path_config.py）----
+doc/
+output/
+temp-files/

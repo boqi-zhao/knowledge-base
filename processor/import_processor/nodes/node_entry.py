@@ -3,6 +3,7 @@ import json
 import logging
 from pathlib import Path
 
+from config.path_config import DOC_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError, FileProcessingError, ValidationError
 from processor.import_processor.state import ImportGraphState
@@ -51,10 +52,11 @@ if __name__ == "__main__":
     # 激活日志的全局配置
     setup_logging()
 
-    # 初始化图状态
+    # 初始化图状态（示例文件位于项目根目录 doc/ 下）
+    demo_file = DOC_DIR / "H3C LA2608室内无线网关 用户手册-6W100-整本手册.pdf"
     init_state = {
         "task_id": "task_test_001",
-        "import_file_path": r"D:\doc\hak180产品安全手册.pdf"
+        "import_file_path": str(demo_file)
     }
 
     # 创建节点对象

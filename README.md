@@ -27,10 +27,15 @@ uv run uvicorn web.main:app --reload
 ## 目录结构
 
 ```
-config/      # 配置模块
+doc/         # 待解析文档（PDF/Markdown），可用 DATA_BASED_ROOT_DIR 覆盖
+output/      # 解析产物（md/json/图片），可用 OUTPUT_DIR 覆盖
+config/      # 配置模块（path_config.py 提供统一路径）
 processor/   # 文档处理
 utils/       # 通用工具
 web/         # Web 服务入口
 tool/        # 工具脚本
 test/        # 测试
 ```
+
+> 所有本地路径均从项目根目录推导（见 `config/path_config.py`），
+> 不再硬编码 `D:\doc`、`D:/output` 等 Windows 路径，macOS / Linux / Windows 均可直接运行。

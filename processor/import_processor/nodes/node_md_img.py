@@ -15,6 +15,7 @@ from minio.deleteobjects import DeleteObject
 
 from config.lm_config import lm_config
 from config.minio_config import minio_config
+from config.path_config import OUTPUT_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError, FileProcessingError
 from processor.import_processor.state import ImportGraphState
@@ -427,12 +428,13 @@ class NodeMDImg(BaseNode):
 if __name__ == "__main__":
     setup_logging()
 
-    md_path = r"D:\output\hak180产品安全手册\hak180产品安全手册.md"
+    demo_title = "H3C LA2608室内无线网关 用户手册-6W100-整本手册"
+    md_path = OUTPUT_DIR / demo_title / f"{demo_title}.md"
     with open(md_path, "r", encoding="utf-8") as f:
         md_content = f.read()
 
     init_state = {
-        "md_path": md_path,
+        "md_path": str(md_path),
         "md_content": md_content
     }
 

@@ -6,6 +6,7 @@ import logging
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 
+from config.path_config import DOC_DIR, OUTPUT_DIR
 from processor.import_processor.base import setup_logging
 from processor.import_processor.nodes.node_bge_embedding import NodeBGEEmbedding
 from processor.import_processor.nodes.node_document_split import NodeDocumentSplit
@@ -102,10 +103,10 @@ if __name__ == "__main__":
     #激活全局日志
     setup_logging()
 
-    # 初始化图状态
+    # 初始化图状态（示例文件位于项目根目录 doc/，产物写入项目根目录 output/）
     init_state = {
-        "import_file_path": r"D:\doc\H3C LA2608室内无线网关 用户手册-6W100-整本手册.pdf",
-        "file_dir": r"D:\output"
+        "import_file_path": str(DOC_DIR / "H3C LA2608室内无线网关 用户手册-6W100-整本手册.pdf"),
+        "file_dir": str(OUTPUT_DIR),
     }
     workflow = KBImportWorkflow()
     final_state = workflow.run(init_state)

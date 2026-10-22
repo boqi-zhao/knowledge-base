@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -85,7 +86,7 @@ async def get_user():
 # 6.4、FileResponse
 @app.get("/download/excel")
 async def download_excel():
-    excel_path = "D:/test.xlsx"
+    excel_path = str(Path(__file__).resolve().parent / "test.xlsx")
     # 返回文件并指定下载文件名
     return FileResponse(
         path=excel_path,

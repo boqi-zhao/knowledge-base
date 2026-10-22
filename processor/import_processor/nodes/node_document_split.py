@@ -7,6 +7,7 @@ from typing import Tuple, List, Dict
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from config.path_config import OUTPUT_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError
 from processor.import_processor.state import ImportGraphState
@@ -66,8 +67,9 @@ class NodeDocumentSplit(BaseNode):
         """
 
         try:
-            # 拼接备份文件路径：固定文件名，便于查找
-            backup_path = Path("D:/output") / state.get("file_title") / "chunks.json"
+            # 拼接备份文件路径：优先使用 state 中的输出目录，未提供时回退到项目根目录 output/
+            backup_root = Path(state.get("file_dir") or OUTPUT_DIR)
+            backup_path = backup_root / state.get("file_title") / "chunks.json"
             # 写入JSON文件：保留中文/格式化缩进，便于人工查看
             with open(backup_path, "w", encoding="utf-8") as f:
                 """
@@ -382,14 +384,15 @@ class NodeDocumentSplit(BaseNode):
 if __name__ == "__main__":
     setup_logging()
 
-    md_path = r"D:\output\hak180产品安全手册\hak180产品安全手册_new.md"
+    demo_title = "H3C LA2608室内无线网关 用户手册-6W100-整本手册"
+    md_path = OUTPUT_DIR / demo_title / f"{demo_title}_new.md"
     with open(md_path, "r", encoding="utf-8") as f:
         md_content = f.read()
 
     init_state = {
-        "md_path": md_path,
+        "md_path": str(md_path),
         "md_content": md_content,
-        "file_title": "hak180产品安全手册"
+        "file_title": demo_title
     }
 
     # 执行核心处理流程

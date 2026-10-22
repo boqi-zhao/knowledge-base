@@ -3,6 +3,7 @@ import json
 import logging
 import shutil
 import time
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -257,6 +258,7 @@ if __name__ == "__main__":
 
     # 示例：输入取项目根目录 doc/ 下的 PDF，产物输出到项目根目录 output/
     init_state = {
+        "task_id": str(uuid.uuid4()),
         "pdf_path": str(DOC_DIR / "H3C LA2608室内无线网关 用户手册-6W100-整本手册.pdf"),
         "file_dir": str(OUTPUT_DIR),
     }

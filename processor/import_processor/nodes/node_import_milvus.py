@@ -1,6 +1,7 @@
 # processor/import_processor/nodes/node_import_milvus.py
 import json
 import logging
+import uuid
 from typing import Dict, Any, List
 
 from pymilvus import DataType
@@ -235,6 +236,7 @@ if __name__ == "__main__":
     state = json.loads(state_json)
 
     init_state = {
+        "task_id": str(uuid.uuid4()),
         "chunks": state.get("chunks")
     }
 

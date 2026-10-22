@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 from typing import Tuple, List, Deque, Dict
@@ -434,6 +435,7 @@ if __name__ == "__main__":
         md_content = f.read()
 
     init_state = {
+        "task_id": str(uuid.uuid4()),
         "md_path": str(md_path),
         "md_content": md_content
     }

@@ -2,6 +2,7 @@
 导入功能的主流程图
 """
 import logging
+import uuid
 
 from langgraph.constants import END
 from langgraph.graph import StateGraph
@@ -105,6 +106,7 @@ if __name__ == "__main__":
 
     # 初始化图状态（示例文件位于项目根目录 doc/，产物写入项目根目录 output/）
     init_state = {
+        "task_id": str(uuid.uuid4()),
         "import_file_path": str(DOC_DIR / "H3C LA2608室内无线网关 用户手册-6W100-整本手册.pdf"),
         "file_dir": str(OUTPUT_DIR),
     }

@@ -1,6 +1,7 @@
 # processor/import_processor/nodes/node_entry.py
 import json
 import logging
+import uuid
 from pathlib import Path
 
 from config.path_config import DOC_DIR
@@ -55,7 +56,7 @@ if __name__ == "__main__":
     # 初始化图状态（示例文件位于项目根目录 doc/ 下）
     demo_file = DOC_DIR / "H3C LA2608室内无线网关 用户手册-6W100-整本手册.pdf"
     init_state = {
-        "task_id": "task_test_001",
+        "task_id": str(uuid.uuid4()),
         "import_file_path": str(demo_file)
     }
 

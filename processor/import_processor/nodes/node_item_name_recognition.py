@@ -1,6 +1,7 @@
 # processor/import_processor/nodes/node_item_name_recognition.py
 import json
 import logging
+import uuid
 from http.client import responses
 from typing import Tuple, Dict, List
 
@@ -399,6 +400,7 @@ if __name__ == "__main__":
     chuncks = json.loads(chuncks_json)
 
     init_state = {
+        "task_id": str(uuid.uuid4()),
         "chunks": chuncks,
         "file_title": demo_title
     }

@@ -1,6 +1,7 @@
 # processor/import_processor/nodes/node_bge_embedding.py
 import json
 import logging
+import uuid
 from typing import Dict, List
 
 from config.path_config import OUTPUT_DIR
@@ -117,6 +118,7 @@ if __name__ == "__main__":
     state = json.loads(state_json)
 
     init_state = {
+        "task_id": str(uuid.uuid4()),
         "chunks": state.get("chunks")
     }
 

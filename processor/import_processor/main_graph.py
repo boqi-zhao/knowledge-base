@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph
 from processor.import_processor.base import setup_logging
 from processor.import_processor.nodes.node_bge_embedding import NodeBGEEmbedding
 from processor.import_processor.nodes.node_document_split import NodeDocumentSplit
-from processor.import_processor.nodes.node_enrty import NodeEntry
+from processor.import_processor.nodes.node_entry import NodeEntry
 from processor.import_processor.nodes.node_import_milvus import NodeImportMilvus
 from processor.import_processor.nodes.node_item_name_recognition import NodeItemNameRecognition
 from processor.import_processor.nodes.node_md_img import NodeMDImg

@@ -58,3 +58,5 @@ models/
 doc/
 output/
 temp-files/
+uploads/
+.cache/

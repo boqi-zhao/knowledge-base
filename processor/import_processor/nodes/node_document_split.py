@@ -46,7 +46,7 @@ class NodeDocumentSplit(BaseNode):
         # 步骤3：无标题场景兜底处理
         sections = self._step_3_handle_no_title(content, sections, title_count, file_title)
 
-        # 步骤4：Chunk精细化处理（长切短合
+        # 步骤4：Chunk精细化处理（长切短合）
         sections = self._step_4_refine_chunks(sections)
 
         # 步骤5：输出文档切分统计信息
@@ -115,6 +115,7 @@ class NodeDocumentSplit(BaseNode):
         content = section.get("content")
 
         # 1. 长度未超限，无需切分，直接返回
+        # max_content_length = 2000
         if len(content) <= self.config.max_content_length:
             return [section]
 
@@ -124,7 +125,7 @@ class NodeDocumentSplit(BaseNode):
         #计算标题的长度
         prefix = f"{title}\n\n" if title else ""
 
-        # 计算正文的长度
+        # 计算可用正文的最大长度
         available_len = self.config.max_content_length - len(prefix)
 
         if available_len <= 0:
@@ -141,7 +142,7 @@ class NodeDocumentSplit(BaseNode):
         # langchain扽文本切割器
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=available_len, # 切片长度（扣除标题）
-            chunk_overlap=0, #重叠部分的长度
+            chunk_overlap=0, # 无重叠：按标题切分后语义完整，无需重叠
             separators=[
                 "\n\n",
                 "\n",
@@ -207,7 +208,7 @@ class NodeDocumentSplit(BaseNode):
 
     def _merge_short_sections(self, sections: List[Dict[str,str]]) -> List[Dict[str,str]]:
 
-        #边界处理：空列表直接范湖
+        #边界处理：空列表直接返回
         if not sections:
             return []
 
@@ -224,31 +225,39 @@ class NodeDocumentSplit(BaseNode):
                 continue
 
             #段落是否过短
+            # min_content_length = 500
             is_current_short = len(current_chunk["content"]) < self.config.min_content_length
-            is_same_parent = current_chunk.get("parent_title") == section.get("parent_title")
+            parent_title = current_chunk.get("parent_title")
+            # 父标题缺失时不能视为同源，避免 None == None 导致跨章节合并
+            is_same_parent = (
+                bool(parent_title)
+                and parent_title == section.get("parent_title")
+            )
 
+            # 合并条件：1.当前块长度不足阈值 2.与下一块同父标题（同属一个原章节）
             if is_current_short and is_same_parent:
-                #合并前清理每个content前面重复的parent_title
+                # 合并前清理：去掉下一块开头重复的父标题，避免内容冗余
                 parent_title = section.get("parent_title")
                 section_content = section.get("content")
                 if parent_title and section_content.startswith(parent_title):
                     section_content = section_content[len(parent_title):].lstrip()
 
-                #合并段落
+                # 合并内容：空行分隔，保证格式整洁
                 current_chunk["content"] += "\n\n" + section_content
 
-                #处理part
+                # 更新子Chunk序号：保留最新序号，便于溯源
                 if "part" in section:
                     current_chunk["part"] = section["part"]
 
             else:
-                #保存当前段落
+                # 不满足合并条件：将当前块加入结果，切换为新的待合并块
                 merged_sections.append(current_chunk)
                 current_chunk = section
-
+        # 循环结束后，将最后一个待合并块加入结果
         if current_chunk is not None:
             merged_sections.append(current_chunk)
-
+        
+        self.logger.debug(f"短Chunk合并完成：原{len(sections)}个 → 合并后{len(merged_sections)}个")
         return merged_sections
 
 
@@ -352,7 +361,7 @@ class NodeDocumentSplit(BaseNode):
                 title_count += 1
             else:
                 current_lines.append(striped_line)
-
+        # 为了处理最后一个章节，_flush_section中只有遇到下一个标题是才会触发保存
         _flush_section()
 
         return sections, title_count, len(lines)

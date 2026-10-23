@@ -1,17 +1,5 @@
-import os
-# from FlagEmbedding import FlagReranker
+"""重排工具统一转发到百炼 API，不再初始化本地 BGE 模型。"""
 
-from config.path_config import resolve_path
+from utils.reranker_http_utils import rerank_documents
 
-_reranker_model = None
-def get_reranker_model():
-    global _reranker_model
-    if _reranker_model is None:
-        # 模型路径支持相对写法（相对项目根目录），统一解析为绝对路径
-        model_path = resolve_path(os.getenv("BGE_RERANKER_LARGE"))
-        _reranker_model= FlagReranker(
-            model_name_or_path=str(model_path) if model_path else None,
-            device=os.getenv("BGE_RERANKER_DEVICE" ),
-            use_fp16=os.getenv("BGE_RERANKER_FP16" )
-        )
-    return _reranker_model
+__all__ = ["rerank_documents"]

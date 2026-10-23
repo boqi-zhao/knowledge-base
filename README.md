@@ -25,6 +25,33 @@ uv run python web/api/import_service.py
 uv run python web/api/query_service.py
 ```
 
+## Embedding 配置
+
+Embedding 使用百炼 `text-embedding-v4` 的原生 API，同时返回 1024 维稠密向量和稀疏向量，不加载本地 BGE 模型。
+在 `.env` 中单独填写 `EMBEDDING_API_KEY`，与对话模型的 `OPENAI_API_KEY` 独立：
+
+```dotenv
+EMBEDDING_API_KEY=你的百炼Key
+EMBEDDING_API_BASE=https://dashscope.aliyuncs.com/api/v1
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_DIM=1024
+EMBEDDING_TIMEOUT=60
+```
+
+接口须使用原生地址，不能填 `compatible-mode/v1`（不返回稀疏向量）。
+`generate_embeddings(texts)` 保持原有 `dense` 列表和 `sparse` 字典列表格式，业务节点、Milvus 集合和混合检索逻辑不变。
+如果已有 BGE-M3 生成的入库数据，需重新生成文档及商品名向量；同为 1024 维也不能混用不同模型的向量。
+本次配置切换不会自动重建或删除数据库数据。
+
+## Reranker 配置
+
+重排使用百炼 `qwen3-rerank` 原生 API，不加载本地 BGE 重排模型，也不依赖 DashScope SDK。
+在 `.env` 的 `Reranker API` 分组配置 `TEXT_RERANK_API_KEY`（可使用与 Embedding 相同的百炼 Key）、
+`TEXT_RERANK_API_BASE=https://dashscope.aliyuncs.com/api/v1`、`TEXT_RERANK_MODEL=qwen3-rerank` 和 `TEXT_RERANK_TIMEOUT=60`。
+`TEXT_RERANK_INSTRUCT` 配置排序任务指令，留空使用模型默认指令。
+`rerank_documents(query, documents)` 继续按输入文档顺序返回分数；业务节点的排序与动态 Top-K 截取逻辑保持不变。
+修改配置后重启服务。
+
 ## 目录结构
 
 ```

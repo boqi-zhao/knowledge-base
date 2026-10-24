@@ -3,8 +3,6 @@ import math
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-import numpy as np
-
 from config.embedding_config import embedding_config
 
 
@@ -13,7 +11,7 @@ class EmbeddingAPIError(RuntimeError):
 
 
 def generate_embeddings(texts):
-    """通过百炼原生 API 生成双向量，保持原有 dense 列表 / sparse 字典列表合同。"""
+    """通过百炼原生 API 生成双向量，稀疏权重统一做 L2 归一化后返回。"""
     if not isinstance(texts, (list, tuple)):
         raise TypeError("texts 必须是文本列表")
     if any(not isinstance(text, str) or not text.strip() for text in texts):
@@ -78,13 +76,25 @@ def _parse_embeddings(body, batch_size):
     for entry in entries:
         if not isinstance(entry, dict):
             raise EmbeddingAPIError("百炼 Embedding API 返回了无效的向量条目")
+        # text_index 是当前批次内的输入文本序号，用于恢复 API 返回条目的顺序；
+        # 它与下面 sparse_embedding 中表示词表维度的 index 含义不同。
         index = entry.get("text_index")
         if type(index) is not int or not 0 <= index < batch_size or dense_vectors[index] is not None:
             raise EmbeddingAPIError("百炼 Embedding API 返回了重复或无效的 text_index")
+        # 本地 BGE-M3 的 dense 是 NumPy 数组，需要 .tolist()；
+        # 百炼的 embedding 已经是 JSON 数值列表，仍校验为现有业务所需的 1024 维。
         dense = entry.get("embedding")
         if (not isinstance(dense, list) or len(dense) != embedding_config.dimension
                 or not all(_is_finite_number(value) for value in dense)):
             raise EmbeddingAPIError("百炼 Embedding API 返回了错误维度或无效的稠密向量")
+        # 稀疏格式差异：本地 BGE-M3 返回整个批次的 CSR 稀疏矩阵，原来需要：
+        #   start, end = sparse_obj.indptr[i], sparse_obj.indptr[i + 1]
+        #   dict(zip(sparse_obj.indices[start:end], sparse_obj.data[start:end]))
+        # 百炼不返回 data / indices / indptr，而是为每条文本单独返回：
+        #   sparse_embedding = [{"index": 102897, "value": 1.1865, "token": "无线"}, ...]
+        # 结构对应：indices 的行切片 -> 每项 index；data 的行切片 -> 每项 value。
+        # indptr 原本负责划分文本的行边界；API 已按文本分组，无需再切片，
+        # 再用外层 text_index 将这一组向量对应回输入文本即可。
         sparse = entry.get("sparse_embedding")
         if not isinstance(sparse, list) or not sparse:
             raise EmbeddingAPIError("百炼未返回有效稀疏向量，请使用原生 API 及 dense&sparse 输出")
@@ -96,9 +106,13 @@ def _parse_embeddings(body, batch_size):
             if (type(token_index) is not int or token_index < 0
                     or token_index in sparse_dict or not _is_finite_number(value)):
                 raise EmbeddingAPIError("百炼 Embedding API 返回了无效的稀疏索引或权重")
+            # token 是便于阅读的词项文本；业务只使用 {整数维度索引: 权重}。
             sparse_dict[token_index] = float(value)
+        # 两种调用方式转换后的数据结构相同，但模型的词表索引含义、权重及
+        # 稠密向量空间不同，百炼向量不能与旧 BGE-M3 入库向量混用。
         dense_vectors[index] = [float(value) for value in dense]
-        sparse_vectors[index] = sparse_dict
+        # 入库和查询共用此入口：都将稀疏向量归一化为单位长度，保持字典格式。
+        sparse_vectors[index] = normalize_sparse_vector(sparse_dict)
     return dense_vectors, sparse_vectors
 
 
@@ -116,15 +130,10 @@ def normalize_sparse_vector(sparse_vec):
     if not sparse_vec:  # 空向量直接返回
         return sparse_vec
 
-    # 提取非零维度的数值
-    values = np.array(list(sparse_vec.values()), dtype=np.float64)
-    # 计算 L2 范数（避免除以 0）
-    l2_norm = np.linalg.norm(values)
-    if l2_norm < 1e-9:  # 范数接近 0 时，直接返回原向量（避免除零错误）
+    # L2 范数 = sqrt(sum(value ** 2))；hypot 避免极小/极大权重平方时下溢/上溢。
+    l2_norm = math.hypot(*sparse_vec.values())
+    if l2_norm == 0:  # 全零向量无法归一化，保留原值，避免除以 0。
         return sparse_vec
 
-    # 归一化：每个数值除以 L2 范数
-    normalized_values = values / l2_norm
-    # normalized_values = (values / l2_norm).astype(np.float32)  # 统一转为 float32
-    # 重建稀疏向量 dict
-    return dict(zip(sparse_vec.keys(), normalized_values))
+    # 每个权重除以同一个范数，列索引与权重比例不变；输出仍为 Python float。
+    return {index: float(value / l2_norm) for index, value in sparse_vec.items()}

@@ -1,13 +1,14 @@
 """百炼适配器的离线合同测试；不发送真实请求、不依赖本地模型或 Milvus。"""
 import io
 import json
+import math
 import unittest
 from contextlib import ExitStack
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 from config.embedding_config import embedding_config
-from utils.embedding_utils import EmbeddingAPIError, generate_embeddings
+from utils.embedding_utils import EmbeddingAPIError, generate_embeddings, normalize_sparse_vector
 
 
 def embedding(index=0, value=0.25):
@@ -41,7 +42,7 @@ class EmbeddingAPITests(unittest.TestCase):
         result = generate_embeddings(["无线网关", "网络配置"])
         self.assertEqual(result["dense"][0], [0.25] * 1024)
         self.assertEqual(result["dense"][1], [0.5] * 1024)
-        self.assertEqual(result["sparse"], [{102897: 1.1865}, {102897: 1.1865}])
+        self.assertEqual(result["sparse"], [{102897: 1.0}, {102897: 1.0}])
         request = self.urlopen.call_args.args[0]
         self.assertEqual(request.full_url, "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding")
         payload = json.loads(request.data)
@@ -49,6 +50,31 @@ class EmbeddingAPITests(unittest.TestCase):
         self.assertEqual(payload["parameters"]["dimension"], 1024)
         self.assertEqual(payload["model"], "text-embedding-v4")
         self.assertEqual(self.urlopen.call_args.kwargs["timeout"], 60)
+
+    def test_normalizes_each_sparse_vector_preserving_indices_and_ratios(self):
+        first, second = embedding(0), embedding(1)
+        first["sparse_embedding"] = [{"index": 8, "value": 3}, {"index": 90, "value": 4}]
+        second["sparse_embedding"] = [{"index": 2, "value": 12}, {"index": 3, "value": 5}]
+        self.urlopen.return_value = response([second, first])
+        result = generate_embeddings(["文档一", "文档二"])
+        self.assertEqual(result["dense"], [[0.25] * 1024, [0.25] * 1024])
+        self.assertEqual(result["sparse"][0], {8: 0.6, 90: 0.8})
+        self.assertEqual(set(result["sparse"][1]), {2, 3})
+        self.assertAlmostEqual(result["sparse"][1][2] / result["sparse"][1][3], 12 / 5)
+        for vector in result["sparse"]:
+            self.assertAlmostEqual(math.hypot(*vector.values()), 1.0)
+            self.assertTrue(all(type(value) is float for value in vector.values()))
+
+    def test_sparse_normalization_handles_empty_zero_and_extreme_weights(self):
+        self.assertEqual(normalize_sparse_vector({}), {})
+        self.assertEqual(normalize_sparse_vector({7: 0.0}), {7: 0.0})
+        for scale in (1.0, 1e-300, 1e300):
+            with self.subTest(scale=scale):
+                original = {8: 3 * scale, 90: 4 * scale}
+                normalized = normalize_sparse_vector(original)
+                self.assertAlmostEqual(normalized[8], 0.6)
+                self.assertAlmostEqual(normalized[90], 0.8)
+                self.assertEqual(original, {8: 3 * scale, 90: 4 * scale})
 
     def test_batches_more_than_ten_texts_without_losing_alignment(self):
         batch_sizes = []

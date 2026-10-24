@@ -250,23 +250,24 @@ class NodeItemNameRecognition(BaseNode):
 
     def _step_5_generate_vectors(self, item_name: str) -> Tuple[List, Dict]:
         """
-        步骤 5: 为商品名称生成 BGE-M3 稠密 + 稀疏双向量（Milvus 向量检索核心）
+        步骤 5: 通过百炼原生 Embedding API 为商品名称生成稠密 + 稀疏双向量
         核心说明：
-            - 稠密向量（dense_vector）：BGE-M3 固定 1024 维，记录文本深层语义信息
-            - 稀疏向量（sparse_vector）：变长键值对，记录文本关键词/特征位置信息
+            - 模型由 EMBEDDING_MODEL 配置，当前使用 text-embedding-v4
+            - 稠密向量（dense_vector）：浮点数列表，当前业务集合要求 EMBEDDING_DIM=1024
+            - 稀疏向量（sparse_vector）：{词表维度索引: 权重} 字典，已在工具层做 L2 归一化
         依赖工具：
-            generate_embeddings：封装 BGE-M3 模型，批量生成双向量，兼容单条/批量输入
+            generate_embeddings：接收文本列表，调用百炼 API，校验结果并按输入顺序返回双向量
         参数：
-            item_name: 步骤 3 识别的商品名称（非空，空值时直接返回空向量）
+            item_name: 步骤 3 识别的商品名称；为空时直接返回 (None, None)
         返回值：
-            Tuple[List, Dict]: (稠密向量列表，稀疏向量字典)
+            (稠密向量列表, 稀疏向量字典)，名称为空时返回 (None, None)
         """
 
-        # 1. 空值时直接返回空向量
+        # 1. 名称为空时返回 (None, None)，不调用 Embedding API
         if not item_name:
             return None, None
 
-        # 2. 使用向量模型生成稠密向量和稀疏向量
+        # 2. 将单个名称包装为文本列表，调用 API 后取回对应的第一组双向量
         vectors = generate_embeddings([item_name])
         return vectors["dense"][0], vectors["sparse"][0]
 
@@ -296,6 +297,7 @@ class NodeItemNameRecognition(BaseNode):
             return
         try:
             # 2. 集合初始化
+            # kb_item_names
             collection_name = milvus_config.item_name_collection
 
             # 判断集合是否已经被创建
@@ -303,7 +305,7 @@ class NodeItemNameRecognition(BaseNode):
                 self._create_item_name_collection(collection_name, milvus_client)
 
             # 3. 幂等性处理：删除同名商品数据，避免重复存储
-            file_title = escape_milvus_string(file_title)
+            file_title = escape_milvus_string(file_title) # Milvus数据库过滤表达式中字符串的安全转义函数（防止解析失败）
             milvus_client.delete(collection_name=collection_name, filter=f"file_title=='{file_title}'")
 
             # 4. 数据插入：构造符合 Schema 的数据，非空向量才添加
@@ -327,7 +329,10 @@ class NodeItemNameRecognition(BaseNode):
     def _create_item_name_collection(self, collection_name, milvus_client):
 
         # 1. 创建schema
-        schema = milvus_client.create_schema(auto_id=True, enable_dynamic_field=True)
+        schema = milvus_client.create_schema(
+            auto_id=True, 
+            enable_dynamic_field=True
+        )
 
         # 2. 创建字段
         # 添加主键字段（INT64类型，自增）
@@ -338,28 +343,28 @@ class NodeItemNameRecognition(BaseNode):
             auto_id=True
         )
 
-        # 添加文件标题字段（VARCHAR类型，最大长度65535）
+        # 添加文件标题字段（VARCHAR类型，最大长度100字节）
         schema.add_field(
             field_name="file_title",
             datatype=DataType.VARCHAR,
             max_length=100
         )
 
-        # 添加商品名称字段（VARCHAR类型，最大长度65535）
+        # 添加商品名称字段（VARCHAR类型，最大长度100字节）
         schema.add_field(
             field_name="item_name",
             datatype=DataType.VARCHAR,
             max_length=100
         )
 
-        # 添加稠密向量字段（FLOAT_VECTOR类型，1024维，BGE-M3模型固定维度）
+        # 添加稠密向量字段（FLOAT_VECTOR类型，1024维，与当前 Embedding 模型设置的输出维度一致）
         schema.add_field(
             field_name="dense_vector",
             datatype=DataType.FLOAT_VECTOR,
             dim=1024
         )
 
-        # 添加稀疏向量字段（SPARSE_FLOAT_VECTOR类型，变长，适配BGE-M3的稀疏向量）
+        # 添加稀疏向量字段（SPARSE_FLOAT_VECTOR类型，接收工具层转换后的索引与权重字典）
         schema.add_field(
             field_name="sparse_vector",
             datatype=DataType.SPARSE_FLOAT_VECTOR
@@ -373,7 +378,7 @@ class NodeItemNameRecognition(BaseNode):
             field_name="dense_vector",  # 字段名
             index_name="dense_vector_index",  # 索引名
             index_type="IVF_FLAT",  # 索引类型（兼容所有Milvus版本）
-            metric_type="COSINE",  # 相似度计算方式（余弦相似度）
+            metric_type="COSINE",  # 相似度计算方式（余弦相似度）---关注方向
             params={"nlist": 128}  # 聚类数（影响检索精度/速度）
         )
 
@@ -382,18 +387,16 @@ class NodeItemNameRecognition(BaseNode):
             field_name="sparse_vector",  # 字段名
             index_name="sparse_vector_index",  # 索引名
             index_type="SPARSE_INVERTED_INDEX",  # 索引类型
-            metric_type="IP",  # 相似度计算方式（内积）
+            metric_type="IP",  # 相似度计算方式（内积）---即关注方向，也关注大小
             params={
                 "inverted_index_algo": "DAAT_MAXSCORE",
                 # 高效的稀疏检索算法
 
                 "normalize": True,
-                # ↑ L2 归一化，让内积 (IP) 等价于余弦相似度
+                # 稀疏向量已在 generate_embeddings 中做 L2 归一化；非零单位向量的 IP 等于余弦相似度
 
                 "quantization": "none"
-                # ↑ 关闭量化，保持原始精度：模型生成的向量已经压缩的一半的精度了（BGE_FP16=1），这里就不再压缩了
-                # "quantization": "none" → 存储原始向量，不压缩
-                # "quantization": "sq8" → 存储压缩后的向量（8-bit 量化
+                # 量化参数设为 none；输入权重来自百炼 API，已转换为 Python float
             })
 
         # 4. 创建集合（Schema + 索引）

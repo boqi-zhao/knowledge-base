@@ -1,6 +1,7 @@
 # processor/import_processor/nodes/node_item_name_recognition.py
 import json
 import logging
+import re
 import uuid
 from http.client import responses
 from typing import Tuple, Dict, List
@@ -109,7 +110,7 @@ class NodeItemNameRecognition(BaseNode):
         步骤 2: 构造大模型商品名称识别的标准化上下文
         核心作用：
             1. 限制切片数量：仅取前k个切片，避免上下文过长
-            2. 限制字符长度：总上下文字符限制，适配大模型输入上限
+            2. 限制字符长度：优先保留完整切片，首片超长时按句子边界截取
             3. 格式化内容：带序号的结构化格式，提升大模型识别精度
         参数说明：
             chunks: 文本切片列表
@@ -119,31 +120,46 @@ class NodeItemNameRecognition(BaseNode):
 
         parts: List[str] = []
         total_chars = 0
-        for idx, chunk in enumerate(chunks[:self.config.item_name_chunk_k], start = 1):
+        max_chars = self.config.item_name_chunk_size
+        for idx, chunk in enumerate(chunks[:self.config.item_name_chunk_k], start=1):
 
             # 1. 提取前k的切片，避免上下文过长
-            chunk_title = chunk.get("title").strip()
-            chunk_content = chunk.get("content").strip()
+            chunk_title = (chunk.get("title") or "").strip()
+            chunk_content = (chunk.get("content") or "").strip()
 
             # 2. 格式化切片
-            piece = f"【切片{idx}】\n标题{chunk_title}\n内容：{chunk_content}"
-            parts.append(piece)
+            header = f"【切片{idx}】\n标题{chunk_title}\n内容："
+            piece = header + chunk_content
 
-            # 3. 计算累计的字符数
-            total_chars += len(piece)
+            # 3. 加入前检查长度，计入切片之间的两个换行符
+            next_total = total_chars + (2 if parts else 0) + len(piece)
+            if next_total > max_chars:
+                if parts:
+                    self.logger.info("切片%s加入后会超过字符上限%s，保留已有完整切片", idx, max_chars)
+                    break
 
-            # 4. 判断是否需要继续切分
-            if total_chars > self.config.item_name_chunk_size:
-                self.logger.warning(f"累计字符数{total_chars}已超过限制{self.config.item_name_chunk_size}，停止切分")
+                # 4. 首片超长：保留完整标题，正文仅保留预算内完整的句子或行
+                if len(header) > max_chars:
+                    self.logger.warning("首片标题及格式超过字符上限%s，返回空上下文以使用文件名兜底", max_chars)
+                    break
+
+                content_budget = max_chars - len(header)
+                content_end = 0
+                # 英文句号仅在后接空白或文末时视为句末，避免切开型号或小数
+                boundaries = re.finditer(r'''[。！？!?]+[”’"'）)\]】」』]*|\.(?=\s|$)|\n+''', chunk_content)
+                for boundary in boundaries:
+                    if boundary.end() > content_budget:
+                        break
+                    content_end = boundary.end()
+                parts.append((header + chunk_content[:content_end]).rstrip())
+                self.logger.info("首片超过字符上限%s，保留标题和%s个正文字符", max_chars, content_end)
                 break
 
-        # 5. 使用换行符对切分后的片段进行连接
-        context = "\n\n".join(parts).strip()
+            parts.append(piece)
+            total_chars = next_total
 
-        # 6. 对返回结果进行二次截断
-        final_context = context[:self.config.item_name_chunk_size]
-
-        return final_context
+        # 5. 已在加入前控制长度，无需再次硬截断
+        return "\n\n".join(parts).strip()
 
     def _step_3_call_llm(self, file_title: str, context: str) -> str:
         """

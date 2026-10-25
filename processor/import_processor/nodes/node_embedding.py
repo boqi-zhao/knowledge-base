@@ -1,4 +1,4 @@
-# processor/import_processor/nodes/node_bge_embedding.py
+# processor/import_processor/nodes/node_embedding.py
 import json
 import logging
 import uuid
@@ -11,16 +11,16 @@ from processor.import_processor.state import ImportGraphState
 from utils.embedding_utils import generate_embeddings
 
 
-class NodeBGEEmbedding(BaseNode):
+class NodeEmbedding(BaseNode):
     """
-    混合向量化节点：使用 BGE-M3 模型将文本转换为向量
+    混合向量化节点：通过 Embedding API 将文本转换为稠密和稀疏向量
     """
 
-    name: str = "node_bge_embedding"
+    name: str = "node_embedding"
 
     def process(self, state: ImportGraphState) -> ImportGraphState:
         """
-        LangGraph核心节点：BGE-M3文本向量化处理
+        LangGraph核心节点：文本向量化处理
         流程总览：
             1. 输入校验：验证chunks有效性，核心数据缺失则终止当前节点
             2. 批量向量化：分批拼接文本、生成双向量，为切片绑定向量字段
@@ -71,7 +71,7 @@ class NodeBGEEmbedding(BaseNode):
         """
         步骤 2: 批量生成向量（核心业务逻辑）
         核心逻辑：
-            1. 分批处理：避免一次性处理过多数据导致显存溢出（OOM）。
+            1. 分批处理：控制每次 Embedding API 请求的文本数量。
             2. 文本构造：将 item_name 和 content 拼接，增强语义（商品名作为核心特征前置）。
             3. 向量生成：调用模型批量生成 Dense（稠密）和 Sparse（稀疏）向量。
         参数：
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     }
 
     # 执行核心处理流程
-    node_bge_embedding = NodeBGEEmbedding()
+    node_bge_embedding = NodeEmbedding()
     result = node_bge_embedding(init_state)
 
     logging.getLogger().info(json.dumps(result, ensure_ascii=False, indent=4))

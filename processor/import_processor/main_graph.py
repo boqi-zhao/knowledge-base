@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph
 
 from config.path_config import DOC_DIR, OUTPUT_DIR
 from processor.import_processor.base import setup_logging
-from processor.import_processor.nodes.node_bge_embedding import NodeBGEEmbedding
+from processor.import_processor.nodes.node_embedding import NodeEmbedding
 from processor.import_processor.nodes.node_document_split import NodeDocumentSplit
 from processor.import_processor.nodes.node_entry import NodeEntry
 from processor.import_processor.nodes.node_import_milvus import NodeImportMilvus
@@ -51,7 +51,7 @@ class KBImportWorkflow:
         graph.add_node("node_md_img", NodeMDImg())#解析文档中的图片的含义，并将其嵌入文档中
         graph.add_node("node_document_split", NodeDocumentSplit())#文档切分
         graph.add_node("node_item_name_recognition", NodeItemNameRecognition())#识别商品名称
-        graph.add_node("node_bge_embedding", NodeBGEEmbedding())#将文本转成向量
+        graph.add_node("node_embedding", NodeEmbedding())#将文本转成向量
         graph.add_node("node_import_milvus", NodeImportMilvus())#将向量和标量存入milvus
 
         # 3. 设置入口节点
@@ -72,8 +72,8 @@ class KBImportWorkflow:
         graph.add_edge("node_pdf_to_md", "node_md_img")
         graph.add_edge("node_md_img", "node_document_split")
         graph.add_edge("node_document_split", "node_item_name_recognition")
-        graph.add_edge("node_item_name_recognition", "node_bge_embedding")
-        graph.add_edge("node_bge_embedding", "node_import_milvus")
+        graph.add_edge("node_item_name_recognition", "node_embedding")
+        graph.add_edge("node_embedding", "node_import_milvus")
         graph.add_edge("node_import_milvus", END)
 
         # 6. 编译工作流

@@ -29,7 +29,7 @@ class NodeSearchEmbeddingHyde(NodeBase):
         1. 参数提取：从会话状态中获取改写后的查询（rewritten_query）和已确认的商品名（item_names）。
         2. 生成假设文档 (Step 1)：调用LLM，基于用户问题生成一段假设性的理想回答（即HyDE文档）。
         3. 混合检索 (Step 2)：
-           - 将“用户问题 + 假设文档”合并，生成BGE-M3稠密+稀疏向量。
+           - 将“用户问题 + 假设文档”合并，通过 Embedding API 生成稠密和稀疏向量。
            - 在Milvus中执行混合检索（带商品名过滤），召回最相似的知识切片。
         4. 结果封装：返回检索到的切片列表和生成的假设文档，更新会话状态。
 

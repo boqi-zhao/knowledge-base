@@ -1,3 +1,5 @@
+"""历史本地 BGE-M3 下载工具；当前业务使用百炼 Embedding API，无需运行。"""
+
 import os
 
 from dotenv import load_dotenv

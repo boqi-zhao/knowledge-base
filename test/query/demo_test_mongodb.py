@@ -1,6 +1,6 @@
 from pymongo import MongoClient
 
-myclient = MongoClient("mongodb://192.168.100.100:27017/")
+myclient = MongoClient("mongodb://192.168.64.3:27017/")
 
 dblist = myclient.list_database_names()
 # dblist = myclient.database_names()

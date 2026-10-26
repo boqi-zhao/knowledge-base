@@ -127,7 +127,7 @@ class NodeImportMilvus(BaseNode):
 
     def _create_chunks_collection(self, collections_name, milvus_client, vector_dimension):
 
-        # 1. 创建schem
+        # 1. 创建schema
         schema = milvus_client.create_schema(auto_id=True, enable_dynamic_field=True)
         # 2. 创建列
         schema.add_field(field_name="chunk_id", datatype=DataType.INT64, is_primary=True, auto_id=True)
@@ -204,7 +204,7 @@ class NodeImportMilvus(BaseNode):
         返回：
             List[Dict[str, Any]] - 回填了chunk_id的切片列表
         """
-        # 1. 填充part字段
+        # 1. 补充part字段，不存在填0
         for item in chunks_json_data:
             # if not item.get("part"):
             #     item["part"] = 0

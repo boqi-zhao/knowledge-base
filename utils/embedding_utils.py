@@ -81,20 +81,15 @@ def _parse_embeddings(body, batch_size):
         index = entry.get("text_index")
         if type(index) is not int or not 0 <= index < batch_size or dense_vectors[index] is not None:
             raise EmbeddingAPIError("百炼 Embedding API 返回了重复或无效的 text_index")
-        # 本地 BGE-M3 的 dense 是 NumPy 数组，需要 .tolist()；
-        # 百炼的 embedding 已经是 JSON 数值列表，仍校验为现有业务所需的 1024 维。
+        # 百炼的 embedding 是 JSON 数值列表，校验为当前配置及业务集合所需的 1024 维。
         dense = entry.get("embedding")
         if (not isinstance(dense, list) or len(dense) != embedding_config.dimension
                 or not all(_is_finite_number(value) for value in dense)):
             raise EmbeddingAPIError("百炼 Embedding API 返回了错误维度或无效的稠密向量")
-        # 稀疏格式差异：本地 BGE-M3 返回整个批次的 CSR 稀疏矩阵，原来需要：
-        #   start, end = sparse_obj.indptr[i], sparse_obj.indptr[i + 1]
-        #   dict(zip(sparse_obj.indices[start:end], sparse_obj.data[start:end]))
-        # 百炼不返回 data / indices / indptr，而是为每条文本单独返回：
+        # 百炼为每条文本单独返回稀疏向量：
         #   sparse_embedding = [{"index": 102897, "value": 1.1865, "token": "无线"}, ...]
-        # 结构对应：indices 的行切片 -> 每项 index；data 的行切片 -> 每项 value。
-        # indptr 原本负责划分文本的行边界；API 已按文本分组，无需再切片，
-        # 再用外层 text_index 将这一组向量对应回输入文本即可。
+        # 将每项 index / value 转为 {整数维度索引: 权重}；API 已按文本分组，
+        # 再用外层 text_index 将这一组向量对应回输入文本。
         sparse = entry.get("sparse_embedding")
         if not isinstance(sparse, list) or not sparse:
             raise EmbeddingAPIError("百炼未返回有效稀疏向量，请使用原生 API 及 dense&sparse 输出")
@@ -108,8 +103,8 @@ def _parse_embeddings(body, batch_size):
                 raise EmbeddingAPIError("百炼 Embedding API 返回了无效的稀疏索引或权重")
             # token 是便于阅读的词项文本；业务只使用 {整数维度索引: 权重}。
             sparse_dict[token_index] = float(value)
-        # 两种调用方式转换后的数据结构相同，但模型的词表索引含义、权重及
-        # 稠密向量空间不同，百炼向量不能与旧 BGE-M3 入库向量混用。
+        # 即使数据结构相同，不同模型的词表索引、权重及稠密向量空间也不同，
+        # 更换模型后需要重建存量向量，不能与旧模型生成的向量混用。
         dense_vectors[index] = [float(value) for value in dense]
         # 入库和查询共用此入口：都将稀疏向量归一化为单位长度，保持字典格式。
         sparse_vectors[index] = normalize_sparse_vector(sparse_dict)

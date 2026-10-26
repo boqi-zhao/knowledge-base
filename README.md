@@ -27,7 +27,7 @@ uv run python web/api/query_service.py
 
 ## Embedding 配置
 
-Embedding 使用百炼 `text-embedding-v4` 的原生 API，同时返回 1024 维稠密向量和稀疏向量，不加载本地 BGE 模型。
+Embedding 使用百炼 `text-embedding-v4` 的原生 API，项目配置为同时返回 1024 维稠密向量和稀疏向量。
 在 `.env` 中单独填写 `EMBEDDING_API_KEY`，与对话模型的 `OPENAI_API_KEY` 独立：
 
 ```dotenv
@@ -47,7 +47,7 @@ EMBEDDING_TIMEOUT=60
 
 ## Reranker 配置
 
-重排使用百炼 `qwen3-rerank` 原生 API，不加载本地 BGE 重排模型，也不依赖 DashScope SDK。
+重排使用百炼 `qwen3-rerank` 原生 API，通过 HTTP 调用，不依赖 DashScope SDK。
 在 `.env` 的 `Reranker API` 分组配置 `TEXT_RERANK_API_KEY`（可使用与 Embedding 相同的百炼 Key）、
 `TEXT_RERANK_API_BASE=https://dashscope.aliyuncs.com/api/v1`、`TEXT_RERANK_MODEL=qwen3-rerank` 和 `TEXT_RERANK_TIMEOUT=60`。
 `TEXT_RERANK_INSTRUCT` 配置排序任务指令，留空使用模型默认指令。

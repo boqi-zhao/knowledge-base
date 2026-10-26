@@ -1,3 +1,5 @@
+"""历史本地 BGE 重排模型下载工具；当前业务使用百炼 Reranker API，无需运行。"""
+
 import os
 
 from dotenv import load_dotenv

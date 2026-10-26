@@ -106,7 +106,7 @@ class NodeItemNameConfirm(NodeBase):
 
         try:
             # 1. 准备提示词
-            chant_model = ChatOpenAI(
+            chat_model = ChatOpenAI(
                 model = lm_config.item_model,
                 api_key=lm_config.api_key,
                 base_url=lm_config.base_url,
@@ -137,7 +137,7 @@ class NodeItemNameConfirm(NodeBase):
 
 
             # 4. 调用模型
-            response = chant_model.invoke(messages)
+            response = chat_model.invoke(messages)
             content = response.content
 
             # 5. 数据清洗：去掉可能的代码围栏（```json 和 ```）
@@ -176,7 +176,7 @@ class NodeItemNameConfirm(NodeBase):
 
     def _step_5_vectorize_and_query(self, item_names) -> List[Dict]:
         """
-           把分析出的item_names逐个向量化（BGEM3模型），并在Milvus向量数据库(kb_item_names)中执行混合搜索，获取匹配评分
+           通过 Embedding API（当前配置为百炼 text-embedding-v4）批量生成 item_names 的稠密和稀疏向量，并在 Milvus 的商品名集合中执行混合搜索，获取匹配评分
            :param item_names: 列表[字符串] - 步骤4中 提取的商品名列表（如["苹果15", "华为P60"]）
            :return: 列表[字典] - 格式：
                 [

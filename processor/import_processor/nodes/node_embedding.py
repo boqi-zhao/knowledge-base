@@ -123,7 +123,7 @@ if __name__ == "__main__":
     }
 
     # 执行核心处理流程
-    node_bge_embedding = NodeEmbedding()
-    result = node_bge_embedding(init_state)
+    node_embedding = NodeEmbedding()
+    result = node_embedding(init_state)
 
     logging.getLogger().info(json.dumps(result, ensure_ascii=False, indent=4))

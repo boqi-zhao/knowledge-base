@@ -196,8 +196,7 @@ class NodeItemNameRecognition(BaseNode):
                 model=lm_config.llm_model,
                 api_key=lm_config.api_key,
                 base_url=lm_config.base_url,
-                temperature=lm_config.llm_temperature,
-                extra_body={"enable_thinking": False}
+                temperature=lm_config.llm_temperature
             )
 
             # 2.3 创建消息对象

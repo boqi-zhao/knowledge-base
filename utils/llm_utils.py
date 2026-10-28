@@ -20,8 +20,6 @@ def get_llm_client(model: str | None = None, json_mode: bool = False) -> ChatOpe
     if key in _llm_client_cache:
         return _llm_client_cache[key]
 
-    extra_body = {"enable_thinking": False}
-
     model_kwargs: dict = {}
     if json_mode:
         model_kwargs["response_format"] = {"type": "json_object"}
@@ -31,7 +29,6 @@ def get_llm_client(model: str | None = None, json_mode: bool = False) -> ChatOpe
         temperature=lm_config.llm_temperature,
         api_key=lm_config.api_key,
         base_url=lm_config.base_url,
-        extra_body=extra_body,
         model_kwargs=model_kwargs,
     )
     _llm_client_cache[key] = client

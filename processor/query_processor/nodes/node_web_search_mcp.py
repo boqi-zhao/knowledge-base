@@ -2,7 +2,7 @@
 import asyncio
 import json
 
-from agents.mcp import MCPServerStreamableHttp
+from agents.mcp import MCPServerSse
 
 from config.bailian_mcp_config import mcp_config
 from processor.query_processor.base import NodeBase
@@ -49,8 +49,8 @@ class NodeWebSearchMcp(NodeBase):
     async def _mcp_call(self, query: str):
 
         # 1.创建mcp客户端对象
-        mcp_client = MCPServerStreamableHttp(
-            name="Streamable HTTP Python Server",
+        mcp_client = MCPServerSse(
+            name="Bailian WebSearch SSE Server",
             params={
                 "url": mcp_config.mcp_base_url,
                 "headers": {"Authorization": f"Bearer {mcp_config.api_key}"},
@@ -85,6 +85,7 @@ class NodeWebSearchMcp(NodeBase):
 if __name__ == "__main__":
 
     init_state = {
+        "session_id": "test_session_id",
         "rewritten_query": "关于brother HAK180烫金机，如何调节转印温度？"
     }
 

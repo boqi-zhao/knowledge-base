@@ -64,7 +64,12 @@ class NodeRrf(NodeBase):
         add_done_task(state.get("session_id"), self.name, state.get("is_stream"))
         return state
 
-    def _rrf_merge(self, rrf_inputs, k: int = 60, max_results: int = None) -> List[Tuple[Dict, float]]:
+    def _rrf_merge(
+            self, 
+            rrf_inputs, 
+            k: int = 60, 
+            max_results: int = None
+        ) -> List[Tuple[Dict, float]]:
         """
         RRF (Reciprocal Rank Fusion) 融合算法
         :param rrf_inputs: 输入数据列表，每个元素是一个元组，包含一个列表和一个权重
@@ -77,10 +82,6 @@ class NodeRrf(NodeBase):
         chunk_data = {}
         chunk_scores = {}
         for rrf_input, weight in rrf_inputs:
-            # print(rrf_input)
-            # print(weight)
-            # rank：文档排名
-            # docker：文档
             for rank, doc in enumerate(rrf_input, start=1):
                 chunk_id = doc.get("chunk_id")
                 # 计算每个文档的得分，并将得分组织在list中

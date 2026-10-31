@@ -34,11 +34,9 @@ class NodeSearchEmbedding(NodeBase):
              sparse_vector = embeddings.get("sparse")[0]
 
              # 3. 组织查询表达式：匹配已确认商品名
+             # 相当于：按 chunk 的 item_name 字段限制检索范围。
              # 'item_name in ["BrotherHAK-180烫金机","BrotherHAK180烫金机"]'
              expr = f'item_name in {item_names}'
-
-             # quoted = ", ".join(f"'{v}'" for v in item_names)
-             # expr = f"item_name in [{quoted}]"
 
              # 4. 组织混合向量检索的参数
              reqs = create_hybrid_search_requests(

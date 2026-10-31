@@ -144,6 +144,7 @@ class NodeSearchEmbeddingHyde(NodeBase):
 if __name__ == "__main__":
 
     init_state = {
+        "session_id": "test_session_id",
         "rewritten_query": "关于brother HAK180烫金机，如何调节转印温度？",
         "item_names": ["BrotherHAK180烫金机", "BrotherHAK-180烫金机"]
     }

@@ -6,8 +6,11 @@
 定义完整的状态结构和辅助函数
 """
 
-from typing import TypedDict, List
+from typing import List, Literal, NotRequired, TypedDict
 import copy
+
+
+ItemNameStatus = Literal["identified", "unconfirmed", "multiple"]
 
 
 class ImportGraphState(TypedDict):
@@ -33,7 +36,8 @@ class ImportGraphState(TypedDict):
 
     # ==================== 文件信息 ====================
     file_title: str                 # 文件标题（不含扩展名）
-    item_name: str                  # 识别出的商品/产品名称
+    item_name: str                  # 识别出的商品/产品名称，或兜底的文件标题
+    item_name_status: NotRequired[ItemNameStatus]
 
     # ==================== 处理中间数据 ====================
     md_content: str                 # Markdown 文档内容

@@ -1,81 +1,47 @@
 # processor/import_processor/nodes/node_item_name_recognition.py
 import json
 import logging
-import re
 import uuid
-from http.client import responses
 from typing import Tuple, Dict, List
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
-from pyexpat.errors import messages
 from pymilvus import DataType
 
-from config.lm_config import lm_config
 from config.milvus_config import milvus_config
 from config.path_config import OUTPUT_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError
-from processor.import_processor.prompt.item_name_recognition import ITEM_NAME_RECOGNITION_TEMPLATE, \
-    ITEM_NAME_RECOGNITION_SYSTEM_PROMPT
-from processor.import_processor.state import ImportGraphState
+from processor.import_processor.prompt.item_name_recognition import (
+    ITEM_NAME_EVIDENCE_TEMPLATE,
+    ITEM_NAME_RECOGNITION_SYSTEM_PROMPT,
+    ITEM_NAME_RECOGNITION_TEMPLATE,
+)
+from processor.import_processor.state import ImportGraphState, ItemNameStatus
 from utils.embedding_utils import generate_embeddings
+from utils.llm_utils import get_llm_client
+from utils.markdown_utils import strip_inline_images
 from utils.milvus_utils import get_milvus_client, escape_milvus_string
 
 
-# # --- 配置参数 (Configuration) # --- 配置参数 (Configuration) ---
-# # 大模型识别商品名称的上下文切片数：取前5个切片，避免上下文过长导致大模型输入超限
-# DEFAULT_ITEM_NAME_CHUNK_K = 5
-# # 大模型上下文总字符数上限：适配主流大模型输入限制，默认2500
-# CONTEXT_TOTAL_MAX_CHARS = 2500
+ITEM_NAME_MAX_BYTES = 100
 
 
 class NodeItemNameRecognition(BaseNode):
-    """
-    主体识别节点：主体识别与标签提取
-    """
+    """从各切片摘录证据，识别整篇文档的主体设备。"""
 
     name = "node_item_name_recognition"
 
     def process(self, state: ImportGraphState) -> ImportGraphState:
-        """
-        LangGraph 核心节点：商品主体名称识别
-        流程总览：
-            1. 提取输入
-            2. 构建大模型上下文
-            3. 调用大模型识别商品名称
-            4. 回填商品名称到状态和切片
-            5. 生成商品名称的稠密/稀疏向量
-            6. 将数据存入Milvus向量数据库
-
-        必要参数：task_id、file_title, chunks
-        更新参数：item_name
-
-        :param state: 工作流状态对象
-        :return: 更新后的状态对象
-        """
-
-        # 步骤1：提取并校验输入
         file_title, chunks = self._step_1_get_inputs(state)
-
-        # 步骤2：构建大模型识别的上下文
-        context = self._step_2_build_context(chunks)
-
-        # 步骤3：调用大模型识别商品名称
-        item_name = self._step_3_call_llm(file_title, context)
-
-        # 步骤4：回填商品名称到状态和切片
+        item_name, status = self._recognize_item_name(file_title, chunks)
         self._step_4_update_chunks(state, chunks, item_name)
+        state["item_name_status"] = status
 
-        # 步骤5：为商品名称生成稠密/稀疏向量
         dense_vector, sparse_vector = self._step_5_generate_vectors(item_name)
-
-        # 步骤6：将数据存入Milvus向量数据库
         self._step_6_save_to_milvus(state, file_title, item_name, dense_vector, sparse_vector)
 
-        # 打印识别结果
-        self.logger.info(f"--- 识别完成: {item_name} ---")
-
+        self.logger.info("主体识别完成，状态=%s，名称=%s", status, item_name)
         return state
 
     def _step_1_get_inputs(self, state: ImportGraphState) -> Tuple[str, List[Dict]]:
@@ -105,125 +71,89 @@ class NodeItemNameRecognition(BaseNode):
 
         return file_title, chunks
 
-    def _step_2_build_context(self, chunks: List[Dict]) -> str:
-        """
-        步骤 2: 构造大模型商品名称识别的标准化上下文
-        核心作用：
-            1. 限制切片数量：仅取前k个切片，避免上下文过长
-            2. 限制字符长度：优先保留完整切片，首片超长时按句子边界截取
-            3. 格式化内容：带序号的结构化格式，提升大模型识别精度
-        参数说明：
-            chunks: 文本切片列表
-        返回值：
-            str: 格式化后的上下文字符串
-        """
-
-        parts: List[str] = []
-        total_chars = 0
-        max_chars = self.config.item_name_chunk_size
-        for idx, chunk in enumerate(chunks[:self.config.item_name_chunk_k], start=1):
-
-            # 1. 提取前k的切片，避免上下文过长
-            chunk_title = (chunk.get("title") or "").strip()
-            chunk_content = (chunk.get("content") or "").strip()
-
-            # 2. 格式化切片
-            header = f"【切片{idx}】\n标题{chunk_title}\n内容："
-            piece = header + chunk_content
-
-            # 3. 加入前检查长度，计入切片之间的两个换行符
-            next_total = total_chars + (2 if parts else 0) + len(piece)
-            if next_total > max_chars:
-                if parts:
-                    self.logger.info("切片%s加入后会超过字符上限%s，保留已有完整切片", idx, max_chars)
-                    break
-
-                # 4. 首片超长：保留完整标题，正文仅保留预算内完整的句子或行
-                if len(header) > max_chars:
-                    self.logger.warning("首片标题及格式超过字符上限%s，返回空上下文以使用文件名兜底", max_chars)
-                    break
-
-                content_budget = max_chars - len(header)
-                content_end = 0
-                # 英文句号仅在后接空白或文末时视为句末，避免切开型号或小数
-                boundaries = re.finditer(r'''[。！？!?]+[”’"'）)\]】」』]*|\.(?=\s|$)|\n+''', chunk_content)
-                for boundary in boundaries:
-                    if boundary.end() > content_budget:
-                        break
-                    content_end = boundary.end()
-                parts.append((header + chunk_content[:content_end]).rstrip())
-                self.logger.info("首片超过字符上限%s，保留标题和%s个正文字符", max_chars, content_end)
-                break
-
-            parts.append(piece)
-            total_chars = next_total
-
-        # 5. 已在加入前控制长度，无需再次硬截断
-        return "\n\n".join(parts).strip()
-
-    def _step_3_call_llm(self, file_title: str, context: str) -> str:
-        """
-        步骤 3: 调用大模型实现商品名称/型号精准识别
-        核心逻辑：
-            1. 上下文为空 → 直接返回file_title（兜底，无需调用大模型）
-            2. 上下文非空 → 加载标准化prompt模板，构建大模型对话消息
-            3. 调用大模型后对返回结果做清洗，过滤无效字符
-            4. 大模型返回空/调用异常 → 均返回file_title兜底，保证流程不中断
-        核心特性：
-            - 提示词解耦：通过load_prompt加载本地模板，无需硬编码
-            - 格式兼容：兼容不同LLM客户端返回格式，防止属性报错
-            - 异常兜底：全异常捕获，大模型服务不可用时不影响主流程
-        参数：
-            file_title: 处理后的文件标题（异常/空值时的兜底值）
-            context: 步骤2构建的结构化切片上下文（大模型识别的核心依据）
-        返回值：
-            str: 清洗后的商品名称（异常/空值时返回原始file_title）
-        """
-
-        # 1. 上下文为空，返回file_title
-        if not context:
-            return file_title
-
-        # 2. 大模型调用
+    def _recognize_item_name(
+        self, file_title: str, chunks: list[dict]
+    ) -> tuple[str, ItemNameStatus]:
         try:
-            # 2.1 加载提示词模板
+            llm = get_llm_client(json_mode=True)
+            evidence = self._collect_evidence(llm, chunks)
+            self.logger.info("主体证据覆盖 %d/%d 个切片", len(evidence), len(chunks))
+            if not evidence:
+                return file_title, "unconfirmed"
+
+            document = {
+                "file_title": file_title,
+                "evidence": [
+                    {"chunk_index": index, "quote": quote} for index, quote in evidence.items()
+                ],
+            }
             prompt = ITEM_NAME_RECOGNITION_TEMPLATE.format(
-                file_title = file_title,
-                context = context
+                document=json.dumps(document, ensure_ascii=False)
             )
-            # 2.2 初始化大模型客户端
-            llm = ChatOpenAI(
-                model=lm_config.llm_model,
-                api_key=lm_config.api_key,
-                base_url=lm_config.base_url,
-                temperature=lm_config.llm_temperature
+            result = self._invoke_json(llm, prompt)
+            status = result.get("status")
+            if status == "multiple":
+                return file_title, "multiple"
+            if status == "unconfirmed":
+                return file_title, "unconfirmed"
+            if status != "identified":
+                raise ValueError("无效的主体识别状态")
+
+            item_name = result.get("item_name")
+            evidence_chunk = result.get("evidence_chunk")
+            if type(evidence_chunk) is not int or evidence_chunk not in evidence:
+                raise ValueError("主体名称缺少有效的证据切片编号")
+            if not isinstance(item_name, str) or len(item_name.strip().splitlines()) != 1:
+                raise ValueError("主体名称必须是非空的单行文本")
+            item_name = "".join(item_name.split())
+            if not 0 < len(item_name.encode("utf-8")) <= ITEM_NAME_MAX_BYTES:
+                raise ValueError("主体名称超出存储长度")
+            return item_name, "identified"
+
+        except Exception as exc:
+            self.logger.warning("主体识别失败，使用文件标题兜底（%s）", type(exc).__name__)
+            return file_title, "unconfirmed"
+
+    def _collect_evidence(self, llm: ChatOpenAI, chunks: list[dict]) -> dict[int, str]:
+        evidence = {}
+        for index, chunk in enumerate(chunks, start=1):
+            # 图片替代文本可能来自上游模型生成的摘要。
+            original_title = chunk.get("title") or ""
+            original_content = chunk.get("content") or ""
+            title = strip_inline_images(original_title).strip()
+            content = strip_inline_images(original_content).strip()
+            if not title and not content:
+                continue
+
+            prompt = ITEM_NAME_EVIDENCE_TEMPLATE.format(
+                chunk=json.dumps({"title": title, "content": content}, ensure_ascii=False)
             )
+            quote = self._invoke_json(llm, prompt)["quote"]
+            if quote is None:
+                continue
+            if not isinstance(quote, str) or not quote.strip():
+                raise ValueError("主体证据必须是非空原文或 null")
 
-            # 2.3 创建消息对象
-            messages = [
-                SystemMessage(content=ITEM_NAME_RECOGNITION_SYSTEM_PROMPT),
-                HumanMessage(content=prompt)
-            ]
+            quote = quote.strip()
+            if not (
+                (quote in title and quote in original_title)
+                or (quote in content and quote in original_content)
+            ):
+                self.logger.warning("丢弃第 %d 个切片中找不到的主体证据", index)
+                continue
+            evidence[index] = quote
+        return evidence
 
-            # 2.4 模型调用
-            response = llm.invoke(messages)
-            item_name = response.content
-
-            # 2.5 数据清洗
-            item_name = (item_name.replace(" ", "")
-                         .replace("\n", "")
-                         .replace("\t", "")
-                         .replace("\r", ""))
-
-            # 2.6 如果返回空字符串
-            if not item_name:
-                return file_title
-
-            return item_name
-
-        except Exception as e:
-            self.logger.error(f"大模型调用异常：{e}")
-            return file_title
+    @staticmethod
+    def _invoke_json(llm: ChatOpenAI, prompt: str) -> dict:
+        response = llm.invoke([
+            SystemMessage(content=ITEM_NAME_RECOGNITION_SYSTEM_PROMPT),
+            HumanMessage(content=prompt),
+        ])
+        result = json.loads(response.content)
+        if not isinstance(result, dict):
+            raise ValueError("主体识别模型必须返回 JSON 对象")
+        return result
 
     def _step_4_update_chunks(self, state: ImportGraphState, chunks: List[Dict[str, str]], item_name: str):
         """
@@ -237,7 +167,7 @@ class NodeItemNameRecognition(BaseNode):
         参数：
             state: 流程状态对象
             chunks: 校验后的文本切片列表
-            item_name: 步骤3识别并清洗后的商品名称
+            item_name: 识别出的商品名称，或兜底的文件标题
         """
 
         state["item_name"] = item_name
@@ -353,7 +283,7 @@ class NodeItemNameRecognition(BaseNode):
         schema.add_field(
             field_name="item_name",
             datatype=DataType.VARCHAR,
-            max_length=100
+            max_length=ITEM_NAME_MAX_BYTES
         )
 
         # 添加稠密向量字段（FLOAT_VECTOR类型，1024维，与当前 Embedding 模型设置的输出维度一致）

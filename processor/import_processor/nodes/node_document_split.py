@@ -13,39 +13,7 @@ from config.path_config import OUTPUT_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError
 from processor.import_processor.state import ImportGraphState
-
-
-def _closing_delimiter(text: str, start: int, opening: str, closing: str) -> int:
-    depth = 1
-    index = start + 1
-    while index < len(text) and text[index] != "\n":
-        char = text[index]
-        if char == "\\" and text[index + 1:index + 2] not in ("", "\n"):
-            index += 2
-            continue
-        if char == opening:
-            depth += 1
-        elif char == closing:
-            depth -= 1
-            if depth == 0:
-                return index
-        index += 1
-    return -1
-
-
-def _inline_image_spans(body: str) -> Iterator[tuple[int, int]]:
-    """识别单行内联图片引用，保留转义字符和 URL 内成对的括号。"""
-    end = 0
-    for marker in re.finditer(r"\\[^\n]|!\[", body):
-        if marker[0] != "![" or marker.start() < end:
-            continue
-        label_end = _closing_delimiter(body, marker.start() + 1, "[", "]")
-        if label_end == -1 or not body.startswith("(", label_end + 1):
-            continue
-        destination_end = _closing_delimiter(body, label_end + 1, "(", ")")
-        if destination_end != -1:
-            end = destination_end + 1
-            yield marker.start(), end
+from utils.markdown_utils import inline_image_spans
 
 
 class NodeDocumentSplit(BaseNode):
@@ -212,7 +180,7 @@ class NodeDocumentSplit(BaseNode):
     def _split_body_with_images(
         self, body: str, splitter: RecursiveCharacterTextSplitter, available_len: int
     ) -> Iterator[str]:
-        spans = list(_inline_image_spans(body))
+        spans = list(inline_image_spans(body))
         if not spans:
             yield from splitter.split_text(body)
             return

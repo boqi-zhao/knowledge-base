@@ -273,7 +273,14 @@ class NodeMDImg(BaseNode):
                     "content": [
                         {
                             "type": "text",
-                            "text": f"""这是"{root_folder}"文件中的一张图片，图片上文部分为"{image_content[0]}"，下文部分为"{image_content[1]}"，请用中文简要总结这张图片的内容，用于 Markdown 图片标题。"""
+                            "text": (
+                                f'这是"{root_folder}"文件中的一张图片，'
+                                f'图片上文部分为"{image_content[0]}"，下文部分为"{image_content[1]}"'
+                                "。请用一行简洁的中文纯文本概括图片，用作 Markdown 图片说明。 "
+                                "优先写出截图中的页面或功能名称，再写清晰可见的关键配置项。 "
+                                "前后文仅用于理解图片，不要补写图中不可见或看不清的字段、数值、选项或状态。 "
+                                "请直接输出摘要，不用 Markdown 标记、引号、换行或说明性开场白。"
+                            )
                         },
                         {
                             "type": "image_url",

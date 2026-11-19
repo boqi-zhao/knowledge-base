@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Tuple, List, Dict
 
@@ -12,6 +13,39 @@ from config.path_config import OUTPUT_DIR
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError
 from processor.import_processor.state import ImportGraphState
+
+
+def _closing_delimiter(text: str, start: int, opening: str, closing: str) -> int:
+    depth = 1
+    index = start + 1
+    while index < len(text) and text[index] != "\n":
+        char = text[index]
+        if char == "\\" and text[index + 1:index + 2] not in ("", "\n"):
+            index += 2
+            continue
+        if char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return -1
+
+
+def _inline_image_spans(body: str) -> Iterator[tuple[int, int]]:
+    """识别单行内联图片引用，保留转义字符和 URL 内成对的括号。"""
+    end = 0
+    for marker in re.finditer(r"\\[^\n]|!\[", body):
+        if marker[0] != "![" or marker.start() < end:
+            continue
+        label_end = _closing_delimiter(body, marker.start() + 1, "[", "]")
+        if label_end == -1 or not body.startswith("(", label_end + 1):
+            continue
+        destination_end = _closing_delimiter(body, label_end + 1, "(", ")")
+        if destination_end != -1:
+            end = destination_end + 1
+            yield marker.start(), end
 
 
 class NodeDocumentSplit(BaseNode):
@@ -122,8 +156,8 @@ class NodeDocumentSplit(BaseNode):
         # 2. 切割文本
         # 章节标题
         title = section.get("title")
-        #计算标题的长度
-        prefix = f"{title}\n\n" if title else ""
+        # 完整标题路径占用每个子块的长度预算。
+        prefix = section.get("_heading_prefix", "")
 
         # 计算可用正文的最大长度
         available_len = self.config.max_content_length - len(prefix)
@@ -133,10 +167,7 @@ class NodeDocumentSplit(BaseNode):
             return [section]
 
 
-        # 去掉title部分，便于以后判断
-        body = content
-        if title and body.lstrip().startswith(title):
-            body = body[body.find(title) + len(title) :].lstrip()
+        body = content.removeprefix(prefix)
 
         # 对正文进行切割
         # langchain扽文本切割器
@@ -155,17 +186,15 @@ class NodeDocumentSplit(BaseNode):
                 "!",
                 ";",
                 " ",
+                "",
             ],
+            strip_whitespace=False,
         )
 
         sub_sections = []
-        chunks = splitter.split_text(body)
-        for idx, chunk in enumerate(chunks, start=1):
-            text = chunk.strip()
-            if not text:
-                continue
-
-            full_text = (prefix + text).strip()
+        chunks = self._split_body_with_images(body, splitter, available_len)
+        for idx, chunk in enumerate((chunk for chunk in chunks if chunk.strip()), start=1):
+            full_text = prefix + chunk
             new_title = f"{title}-{idx}"
 
             sub_sections.append(
@@ -180,6 +209,33 @@ class NodeDocumentSplit(BaseNode):
 
         return sub_sections
 
+    def _split_body_with_images(
+        self, body: str, splitter: RecursiveCharacterTextSplitter, available_len: int
+    ) -> Iterator[str]:
+        spans = list(_inline_image_spans(body))
+        if not spans:
+            yield from splitter.split_text(body)
+            return
+
+        def parts() -> Iterator[str]:
+            cursor = 0
+            for start, end in spans:
+                yield from splitter.split_text(body[cursor:start])
+                yield body[start:end]
+                cursor = end
+            yield from splitter.split_text(body[cursor:])
+
+        current = ""
+        for part in parts():
+            if current and len(current) + len(part) > available_len:
+                yield current
+                current = ""
+            if len(part) > available_len:
+                self.logger.warning("图片引用长度 %d 超过正文预算 %d，独立保留", len(part), available_len)
+            current += part
+        if current:
+            yield current
+
 
     def _step_4_refine_chunks(self, sections: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """
@@ -188,29 +244,26 @@ class NodeDocumentSplit(BaseNode):
        :param sections: 步骤3处理后的章节列表
        :return: 长度适中、低碎片化的最终Chunk列表
        """
-        # 阶段1：超长段落切分，控制在最大字符数内（self.config.max_content_length）
-        refined_split = []
+        # 每个原始小节内先长切，再合并相邻短块。
+        final_sections = []
         for section in sections:
             sub_sections = self._split_long_section(section)
-            refined_split.extend(sub_sections)
-
-        # 阶段2：短段落合并，减少内容碎片化
-        final_sections = self._merge_short_sections(refined_split)
+            prefix = section.get("_heading_prefix", "")
+            final_sections.extend(self._merge_short_sections(sub_sections, prefix))
 
         # 阶段3：父标题兜底
         # 兜底规则：无parent_title则用自身title，title也无则填空字符串
         for sec in final_sections:
+            sec.pop("_heading_prefix", None)
             if not sec.get("parent_title"):
                 sec["parent_title"] = sec.get("title") or ""
 
         return final_sections
 
 
-    def _merge_short_sections(self, sections: List[Dict[str,str]]) -> List[Dict[str,str]]:
-
-        #边界处理：空列表直接返回
-        if not sections:
-            return []
+    def _merge_short_sections(self, sections: List[Dict[str,str]], prefix: str) -> List[Dict[str,str]]:
+        if len(sections) < 2:
+            return sections
 
 
         #合并后的结果
@@ -227,28 +280,10 @@ class NodeDocumentSplit(BaseNode):
             #段落是否过短
             # min_content_length = 500
             is_current_short = len(current_chunk["content"]) < self.config.min_content_length
-            parent_title = current_chunk.get("parent_title")
-            # 父标题缺失时不能视为同源，避免 None == None 导致跨章节合并
-            is_same_parent = (
-                bool(parent_title)
-                and parent_title == section.get("parent_title")
-            )
-
-            # 合并条件：1.当前块长度不足阈值 2.与下一块同父标题（同属一个原章节）
-            if is_current_short and is_same_parent:
-                # 合并前清理：去掉下一块开头重复的父标题，避免内容冗余
-                parent_title = section.get("parent_title")
-                section_content = section.get("content")
-                if parent_title and section_content.startswith(parent_title):
-                    section_content = section_content[len(parent_title):].lstrip()
-
-                # 合并内容：空行分隔，保证格式整洁
-                current_chunk["content"] += "\n\n" + section_content
-
-                # 更新子Chunk序号：保留最新序号，便于溯源
-                if "part" in section:
-                    current_chunk["part"] = section["part"]
-
+            next_body = section["content"].removeprefix(prefix)
+            merged_length = len(current_chunk["content"]) + len(next_body)
+            if is_current_short and merged_length <= self.config.max_content_length:
+                current_chunk["content"] += next_body
             else:
                 # 不满足合并条件：将当前块加入结果，切换为新的待合并块
                 merged_sections.append(current_chunk)
@@ -256,7 +291,12 @@ class NodeDocumentSplit(BaseNode):
         # 循环结束后，将最后一个待合并块加入结果
         if current_chunk is not None:
             merged_sections.append(current_chunk)
-        
+
+        if len(merged_sections) != len(sections):
+            for index, section in enumerate(merged_sections, start=1):
+                section["part"] = index
+                section["title"] = f"{section['parent_title']}-{index}"
+
         self.logger.debug(f"短Chunk合并完成：原{len(sections)}个 → 合并后{len(merged_sections)}个")
         return merged_sections
 
@@ -272,7 +312,7 @@ class NodeDocumentSplit(BaseNode):
         :param file_title: 所属文件标题
         :return: 兜底后的章节列表
         """
-        if title_count == 0:
+        if title_count == 0 and sections:
 
             # 将content交给LLM，总结一个标题出来
             # 提示词：根据content和file_title总结一个段落标题，不要有空格，不要换行，控制在20个字符以内
@@ -280,7 +320,7 @@ class NodeDocumentSplit(BaseNode):
             # 无标题处理
             return [{
                 "title": "无标题",
-                "content": content,
+                "content": content.strip("\n"),
                 "file_title": file_title
             }]
 
@@ -297,74 +337,125 @@ class NodeDocumentSplit(BaseNode):
 
         # 1、定义标题正则
         # 正则匹配Markdown 1-6级标题（核心规则，适配缩进/标准格式）
-        # ^\s*：行首允许0/多个空格/Tab（兼容缩进的标题）
-        # #{1,6}：匹配1-6个#（对应MD1-6级标题）
-        # \s+：#后必须有至少1个空格（区分#是标题还是普通文本）
-        # .+：标题文字至少1个字符（避免空标题）
-        title_pattern = r'\s*#{1,6}\s+.+'
+        # 捕获 # 的数量，后续用作标题栈的层级。
+        title_pattern = r'^ {0,3}(#{1,6})[ \t]+\S'
 
         # 2、初始化需要的数据
         lines = content.split("\n")
         sections = []  # 章节列表
+        levels = []
+        current_level = 0
         title_count = 0  # 标题数量
         current_title = ""  # 当前章节的标题
         current_lines = []  # 当前标题和下一个标题之间的文本内容
-        in_code_block = False  # 代码块标记：False当前没在代码块中，True当前在代码块中
+        code_block_start_marker = ""
 
         # 3、定义内部函数组装sections列表
         def _flush_section():
             """内部辅助函数：将当前缓存的章节写入sections，空缓存则跳过"""
-            if not current_lines:
+            body = "\n".join(current_lines).strip("\n")
+            if not current_title and not body.strip():
                 return
             sections.append({
                 "title": current_title,
-                # 每段使用 \n换行区分
-                "content": "\n".join(current_lines),
+                "content": body,
                 "file_title": file_title,
             })
+            levels.append(current_level)
 
         # 4、逐行遍历，识别标题和普通行以及代码快
         for line in lines:
             # 去空格
             striped_line = line.strip()
 
-            # # 4.1 识别代码快边界 ``` 或 ~~~
-            # if striped_line.startswith("```") or striped_line.startswith("~~~"):
-            #     in_code_block = not in_code_block
-            #     current_lines.append(striped_line)
-            #     continue
-            # 4.1 识别代码块边界 ```、~~~、````、~~~~ 等（至少 3 个连续字符）
-            # 使用正则匹配：行首到行尾只有 ` 或 ~ 字符，且数量>=3
-            code_block_marker_match = re.match(r'^(`{3,}|~{3,})$', striped_line)
-            if code_block_marker_match:
-                marker = code_block_marker_match.group(1)
-
-                if not in_code_block:
-                    # 进入代码块，记录开始的标记特征
-                    in_code_block = True
-                    code_block_start_marker = marker
-                elif in_code_block and striped_line == code_block_start_marker:
-                    # 遇到匹配的结束标记（相同字符且相同长度）
-                    in_code_block = False
-                    code_block_start_marker = None
-
-                current_lines.append(line)
-                continue
-
-            # 4.2 表示标题
-            is_valid_title = (not in_code_block) and re.match(title_pattern, line)
-            if is_valid_title:
+            # 允许围栏带语言名，用同类且足够长的标记闭合。
+            fence = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+            if code_block_start_marker:
+                if fence and fence[1].startswith(code_block_start_marker) and not fence[2].strip():
+                    code_block_start_marker = ""
+            elif fence and (fence[1][0] == "~" or "`" not in fence[2]):
+                code_block_start_marker = fence[1]
+            elif heading := re.match(title_pattern, line):
                 #遇到标题行则先将上一个片段写入section
                 _flush_section()
                 current_title = striped_line
-                current_lines = [current_title]
+                current_level = len(heading[1])
+                current_lines = []
                 title_count += 1
-            else:
-                current_lines.append(striped_line)
+                continue
+
+            current_lines.append(line)
         # 为了处理最后一个章节，_flush_section中只有遇到下一个标题是才会触发保存
         _flush_section()
 
-        return sections, title_count, len(lines)
+        # 标题进入路径，有正文的小节才生成块。
+        title_stack = []
+        with_body = []
+        for section, level in zip(sections, self._restore_flat_levels(sections, levels)):
+            if level:
+                while title_stack and title_stack[-1][0] >= level:
+                    title_stack.pop()
+                title_stack.append((level, section["title"]))
+            if section["content"].strip():
+                prefix = "\n".join(title for _, title in title_stack) + "\n\n" if title_stack else ""
+                section["_heading_prefix"] = prefix
+                section["content"] = prefix + section["content"]
+                with_body.append(section)
+
+        return with_body, title_count, len(lines)
+
+    def _restore_flat_levels(self, sections: List[Dict[str, str]], levels: List[int]) -> List[int]:
+        """为同级且存在编号父子关系的标题补充层级。"""
+        if len(set(levels) - {0}) != 1:
+            return levels
+
+        numbers = []
+        for section in sections:
+            match = re.match(r"^#{1,6}[ \t]+(\d+(?:\.\d+)+)[ \t]+\S", section["title"])
+            numbers.append(tuple(match[1].split(".")) if match else ())
+
+        seen = set()
+        for number in numbers:
+            if any(number[:depth] in seen for depth in range(1, len(number))):
+                break
+            if number:
+                seen.add(number)
+        else:
+            return levels
+
+        first = int(levels[0] == 0)
+        # 编号章节前紧邻的无正文首标题作为根标题。
+        root = int(
+            first + 1 < len(sections)
+            and not numbers[first]
+            and not sections[first]["content"].strip()
+            and bool(numbers[first + 1])
+        )
+        ancestors = []
+        local_level = plain_depth = 0
+        previous_plain_empty = False
+        for index in range(first, len(sections)):
+            section, number = sections[index], numbers[index]
+            if number:
+                while ancestors and (
+                    len(number) <= len(ancestors[-1]) or number[:len(ancestors[-1])] != ancestors[-1]
+                ):
+                    ancestors.pop()
+                ancestors.append(number)
+                levels[index] = root + len(ancestors)
+                local_level = plain_depth = 0
+                previous_plain_empty = False
+            elif not ancestors:
+                levels[index] = 1
+            elif re.match(r"^#{1,6}[ \t]+\d+\.[ \t]+\S", section["title"]):
+                local_level, plain_depth = 1, 0
+                previous_plain_empty = False
+                levels[index] = root + len(ancestors) + local_level
+            else:
+                plain_depth = plain_depth + 1 if previous_plain_empty else 1
+                levels[index] = root + len(ancestors) + local_level + plain_depth
+                previous_plain_empty = not section["content"].strip()
+        return levels
 
 
     def _step_1_get_inputs(self, state: ImportGraphState) -> Tuple[str, str]:

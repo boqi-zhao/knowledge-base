@@ -14,6 +14,9 @@ from processor.import_processor.state import ImportGraphState
 from utils.milvus_utils import get_milvus_client, escape_milvus_string
 
 
+CHUNK_TITLE_MAX_BYTES = 100
+
+
 class NodeImportMilvus(BaseNode):
     """
     导入向量库节点：数据持久化
@@ -132,8 +135,8 @@ class NodeImportMilvus(BaseNode):
         # 2. 创建列
         schema.add_field(field_name="chunk_id", datatype=DataType.INT64, is_primary=True, auto_id=True)
         schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=65535)  # 切片内容
-        schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=100)  # 切片标题
-        schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=100)  # 父标题
+        schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=CHUNK_TITLE_MAX_BYTES)
+        schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=CHUNK_TITLE_MAX_BYTES)
         schema.add_field(field_name="part", datatype=DataType.INT8)  # 分片编号
         schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=100)  # 源文件标题
         schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=100)  # 商品名称（幂等性依据）
@@ -204,17 +207,24 @@ class NodeImportMilvus(BaseNode):
         返回：
             List[Dict[str, Any]] - 回填了chunk_id的切片列表
         """
-        # 1. 补充part字段，不存在填0
+        # 仅缩短写入 Milvus 的字段，将完整标题存入动态字段。
+        rows = []
         for item in chunks_json_data:
-            # if not item.get("part"):
-            #     item["part"] = 0
-            if "part" not in item:
-                item["part"] = 0
+            item.setdefault("part", 0)
+            row = item.copy()
+            for field in ("title", "parent_title"):
+                title = row.get(field)
+                if isinstance(title, str):
+                    encoded = title.encode("utf-8")
+                    if len(encoded) > CHUNK_TITLE_MAX_BYTES:
+                        row[f"full_{field}"] = title
+                        row[field] = encoded[:CHUNK_TITLE_MAX_BYTES].decode("utf-8", errors="ignore")
+            rows.append(row)
 
         # 2. 批量插入数据
         result = client.insert(
             collection_name=milvus_config.chunks_collection,
-            data=chunks_json_data
+            data=rows
         )
 
         # 3. 回填chunk_id
